@@ -24,12 +24,25 @@ inds = sortperm(mean(act, dims=2)[:])[end-10:end]
 
 using DynamicalSystems
 using MultivariateStats
-
+## ====
 function norm_std(x)
     μ, σ = mean(x), std(x)
     return (x .- μ) ./ σ
 end
 
+function fast_stack(x)
+    X = zeros(size(x))'
+    for j in 1:size(X, 2)
+        X[:, j] = x.data[j]
+    end
+    return collect(X)
+end
+
+function statespace_to_vec(m, E_)
+    q = fast_stack(m)[1:E_, :]
+    [q[:, i] for i in 1:size(q, 2)]
+    # [m[i, :] for i in 1:size(m, 1)]
+end
 
 function get_embeddings(x)
     Ds, Ts, Es = [], [], []
@@ -43,15 +56,109 @@ function get_embeddings(x)
     return Ds, Ts, Es
 end
 
-@time Ds, Ts, Es = get_embeddings(act)
+function find_nearest_neighbors(point::Vector{Float64}, manifold::Vector{Vector{Float64}}, E::Int)
+    distances = [euclidean(point, m) for m in manifold]
+    sorted_indices = sortperm(distances)[1:E+1]
+    return sorted_indices, distances[sorted_indices]
+end
 
+typeof(BallTree)
+
+
+function find_nearest_neighbors(point, manifold::StateSpaceSet, k)
+    kdtree = BallTree(manifold.data)
+    idxs, dists = knn(kdtree, point, k, true)
+end
+
+function find_nearest_neighbors(point, kdtree::BallTree, k)
+    idxs, dists = knn(kdtree, point, k, true)
+end
+
+function compute_weights(distances::Vector{Float64})
+    u = maximum(distances)
+    weights = @. exp(-distances / u)
+    weights ./= sum(weights)
+    return weights
+end
+
+function cross_map(manifold::Vector{Vector{Float64}}, target::Vector{Float64}, E::Int, tau::Int)
+    estimates = Float64[]
+    for i in 1:length(manifold)
+        neighbors, distances = find_nearest_neighbors(manifold[i], manifold, E + 1)
+        weights = compute_weights(distances)
+        target_indices = [n + (E - 1) * tau for n in neighbors]
+        estimate = sum(target[target_indices] .* weights)
+        push!(estimates, estimate)
+    end
+    return estimates
+end
+
+function cross_map(manifold::StateSpaceSet, target::Vector{Float64}, E::Int, d::Int)
+    estimates = Float64[]
+    manifold_kdtree = BallTree(manifold.data)
+    for i in 1:d:length(manifold)
+        idxs, distances = find_nearest_neighbors(manifold[i], manifold_kdtree, E + 1)
+        weights = compute_weights(distances)
+        # target_indices = [n + (E - 1) * tau for n in neighbors]
+        estimate = sum(target[idxs] .* weights)
+        push!(estimates, estimate)
+    end
+    return estimates
+end
+
+## ====
+l, E = minimum(size.((M_X, M_Y)))
+size.((M_X, M_Y))
+
+@time Ds, Ts, Es = get_embeddings(act)
 cs = 101, 36
+function do_cmm(Ds, act, x_ind, y_ind, L)
+    M_X, M_Y = Ds[x_ind], Ds[y_ind]
+    l, E = minimum(size.((M_X, M_Y)))
+    # M_x = statespace_to_vec(M_X, E)[1:L]
+    # M_y = statespace_to_vec(M_Y, E)[1:L]
+    X_short = act[x_ind, 1:l]
+    Y_short = act[y_ind, 1:l]
+
+    X_est = cross_map(M_y, X_short, E, tau)
+    Y_est = cross_map(M_x, Y_short, E, tau)
+
+    rho_X = cor(X_short[(E-1)*tau+1:end], X_est)
+    rho_Y = cor(Y_short[(E-1)*tau+1:end], Y_est)
+
+    return X_est, Y_est, rho_X, rho_Y
+end
+
+L = 100
+M_X, M_Y = Ds[101], Ds[36]
+tau_X, tau_Y = Ts[101], Ts[36]
+l, E = minimum(size.((M_X, M_Y)))
+X_short, Y_short = act[101, 1:l], act[36, 1:l]
+X_est = cross_map(M_Y[1:l], X_short, E, 20)
+Y_est = cross_map(M_X[1:l], Y_short, E, 20)
+
+rho_X = cor(X_short[(E-1)*tau_Y+1:end], X_est)
+
+X_short[(E-1)*tau_X+1:end]
+
+tau = Ds[101][]
+
+
+Ls, rho_X, rho_Y = do_cmm(Ds[101], Ds[36], act[101, :], act[36, :], Ts[101], 100)
+
+
+# Plot results
+p = plot(L_values, [rho_X rho_Y], label=["X causes Y" "Y causes X"],
+    xlabel="Library Size", ylabel="Correlation ρ",
+    title="Convergent Cross Mapping",
+    legend=:bottomright)
+
+
+
+
 using NearestNeighbors
 kdtree = BallTree(Ds[101].data)
-k = 10
-
-Ds[101][100, :]
-
+k = 100 # Library size
 idxs, dists = knn(kdtree, Ds[101][100, :], k, true)
 
 plot(Ds[101][:, 1], Ds[101][:, 2])
@@ -59,6 +166,16 @@ scatter!(Ds[101][idxs, 1], Ds[101][idxs, 2])
 
 kdtree2 = BallTree(Ds[36].data)
 idxs2, dists2 = knn(kdtree2, Ds[36][100, :], k, true)
+
+E = 3
+tau = 1
+
+weights = compute_weights(dists2)
+estimate = sum(Ds[101].data[idxs2, :] .* weights)
+rho_X = cor(X[E*tau+1:end], X_est)
+
+
+
 
 d_ = Ds[36]
 plot(d_[:, 1], d_[:, 2])
