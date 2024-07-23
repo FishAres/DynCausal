@@ -41,13 +41,11 @@ end
 function get_embeddings_pecuzal(x; clean_func=linear_detrend)
     Ds, Ts, Es = [], [], []
     for (i, cell_act) in enumerate(eachrow(x))
-        Threads.@spawn begin
-            x_norm = clean_func(cell_act)
-            Y, τ_vals, ts_vals, ΔLs, ϵ = pecuzal_embedding(x_norm)
-            push!(Ds, Y)
-            push!(Ts, τ_vals)
-            push!(Es, ϵ)
-        end
+        x_norm = clean_func(cell_act)
+        Y, τ_vals, ts_vals, ΔLs, ϵ = pecuzal_embedding(x_norm)
+        push!(Ds, Y)
+        push!(Ts, τ_vals)
+        push!(Es, ϵ)
     end
     return Ds, Ts, Es
 end

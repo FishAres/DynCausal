@@ -17,35 +17,13 @@ include(srcdir("ccm_utils.jl"))
 
 data = npzread(datadir("exp_pro", "v1_anim5_tp6_actwvelp.npy"))
 
-using ToeplitzMatrices
 
-H = Hankel(data[101, :])
-U, Σ, V = svd(H)
-begin
-    plot(U[:, 1], label="col. 1")
-    plot!(U[:, 2], label="col. 2")
-    plot!(U[:, 3], label="col. 3")
+using Wavelets
+
+data_denoised = let
+    x_denoised = denoise.(eachrow(data))
+    reduce(vcat, x_denoised')
 end
-
-
-
-using Peaks
-
-using SignalDecomposition
-
-m = 5
-k = 30
-Q = [2, 2, 2, 3, 3, 3, 3]
-s = data[101, :]
-x, r = decompose(s, ManifoldProjection(m, Q, k))
-
-H = Hankel(x)
-U, Σ, V = svd(H)
-
-plot(cumsum(Σ) ./ sum(Σ))
-
-plot(x)
-plot(r)
 
 ## ======
 D, τ, e = pecuzal_embedding(linear_detrend(data[101, :]))
@@ -67,18 +45,43 @@ end
 
 ## ====
 
-@time Ds, Ts, Es = get_embeddings_pecuzal(data, clean_func=norm_std)
+@time Ds, Ts, Es = get_embeddings_pecuzal(data_denoised, clean_func=linear_detrend)
 
-
-
-ccm_data, shadow_manifolds, active_inds = get_active_manifolds(data; act_thresh=1.005)
+ccm_data, shadow_manifolds, active_inds = get_active_manifolds(data_denoised; act_thresh=1.005)
 ids = get_active_pairs(active_inds, size(data, 1))
 
 ms = filter(x -> length(size(x)) > 1, Ds)
 Ls = 200:500:7000
 rho_Xs, rho_Ys = collect_ccm(shadow_manifolds, ccm_data, ids, Ls)
 
+maximum(Ts[101])
+vp_est = cross_map(Ds[101], data_denoised[163, :], 3, 50, 20)
+plot(vp_est)
+start_idx = 2 * 50
 
+xt = data_denoised[163, start_idx:length(vp_est)+start_idx-1]
+
+plot(vp_est)
+plot!(xt)
+
+filter(x -> length(x) > 1, Ts)
+
+minimum(size.((Ds[101], Ds[163])))
+
+minimum(intersect(Ts[101][2:end], Ts[163][2:end]))
+
+histogram(Ts[101], bins=0:1:60)
+histogram!(Ts[163], bins=0:1:60)
+
+Ts[101]
+
+median(Ts[101])
+median(Ts[163])
+
+plot(Ts[101])
+
+
+do_cmm(Ds, data_denoised, 101, 163, Ls)
 
 
 begin
